@@ -22,7 +22,7 @@ validate_ok 13, $schema, E('/', 'oneOf failed: Not multiple of 3.');
 # http://json-schema.org/latest/json-schema-validation.html#anchor79
 $schema
   = {type => 'object', properties => {x => {type => ['string', 'null'], format => 'date-time'}}};
-validate_ok {x => 'foo'}, $schema, E('/x', 'anyOf failed: Does not match date-time format.');
+validate_ok {x => 'foo'}, $schema, E('/x', 'anyOf[0]: Does not match date-time format.');
 validate_ok {x => '2015-04-21T20:30:43.000Z'}, $schema;
 validate_ok {x => undef}, $schema;
 
