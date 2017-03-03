@@ -63,9 +63,9 @@ sub coerce {
 
 sub load_and_validate_schema {
   my ($self, $spec, $args) = @_;
-  my $clone = JSON::Validator->new->schema($spec)->schema;
-  my @errors
-    = JSON::Validator->new->schema($args->{schema} || SPECIFICATION_URL)->validate($clone->data);
+  my $clone = JSON::Validator->new(%$self)->schema($spec)->schema;
+  my @errors = JSON::Validator->new(%$self)->schema($args->{schema} || SPECIFICATION_URL)
+    ->validate($clone->data);
 
   Carp::confess(join "\n", "Invalid schema:", @errors) if @errors;
   warn "[JSON::Validator] Loaded $spec\n" if DEBUG;
@@ -269,18 +269,11 @@ sub _resolve_schema {
     if (UNIVERSAL::isa($topic, 'HASH')) {
       for my $k (sort keys %$topic) {
         my $v = $topic->{$k};
-
-        # int($v) returns the memory address of the reference. The "if" below
-        # will not resolve the same "$ref" over again.
         next if ref $v and $self->{seen}{int($v)}++;
-
-        # Make sure we do not modify the input data structure.
-        # Changing the input makes t/expand.t in swagger2.git fail.
-        $topic->{$k} = [@$v] if UNIVERSAL::isa($v, 'ARRAY');
-        $topic->{$k} = {%$v} if UNIVERSAL::isa($v, 'HASH');
-
         push @topics, $topic->{$k} if ref $topic->{$k};
-        push @refs, $topic if $k eq '$ref' and !ref $v;
+        next unless $k eq '$ref' and !ref $v;
+        warn "[JSON::Validator] - Found reference $topic->{$k}\n" if DEBUG > 2;
+        unshift @refs, $topic;
       }
     }
     elsif (UNIVERSAL::isa($topic, 'ARRAY')) {
@@ -299,21 +292,20 @@ sub _resolver {
   # Seconds step: Resolve $ref
   for my $topic (@$refs) {
     my $ref = $topic->{'$ref'} or next;    # already resolved?
-    $ref = "#/definitions/$ref" if $ref =~ /^\w+$/;    # TODO: Figure out if this could be removed
+    $ref = Mojo::Util::url_unescape($ref || '');
     $ref = Mojo::URL->new($namespace)->fragment($ref) if $ref =~ s!^\#!!;
     $ref = Mojo::URL->new($ref) unless ref $ref;
 
-    warn "[JSON::Validator] Resolving ref $ref defined in $namespace\n" if DEBUG == 2;
     my $look_in = $self->{resolved}{$ref->clone->fragment(undef)};
 
     if (!$look_in) {
       $look_in = $self->_load_schema($ref, $namespace);
       $look_in = $self->_resolve_schema($look_in, $look_in->data->{id} || $namespace);
-      warn "[JSON::Validator] Will look for $ref in $look_in->{data}{id}\n" if DEBUG == 2;
     }
 
-    $ref = $look_in->get($ref->fragment || '')
-      || die qq[Could not find "$topic->{'$ref'}" ($ref). Typo in schema "$namespace"?];
+    warn "[JSON::Validator] Resolving ref $topic->{'$ref'} ($ref)\n" if DEBUG > 1;
+    $ref = $look_in->get($ref->fragment)
+      || die qq[Possibly a typo in schema? Could not find ($topic->{'$ref'}). ($ref)];
     %$topic = %$ref;
     delete $topic->{id} unless ref $topic->{id};    # TODO: Is this correct?
   }
@@ -337,13 +329,13 @@ sub _validate {
   elsif ($type) {
     my $method = sprintf '_validate_type_%s', $type;
     @errors = $self->$method($data, $path, $schema);
-    warn "[JSON::Validator] type @{[$path||'/']} $method [@errors]\n" if DEBUG == 2;
+    warn "[JSON::Validator] type @{[$path||'/']} $method [@errors]\n" if DEBUG > 1;
     return @errors if @errors;
   }
 
   if (my $rules = $schema->{not}) {
     push @errors, $self->_validate($data, $path, $rules);
-    warn "[JSON::Validator] not @{[$path||'/']} == [@errors]\n" if DEBUG == 2;
+    warn "[JSON::Validator] not @{[$path||'/']} == [@errors]\n" if DEBUG > 1;
     return @errors ? () : (E $path, 'Should not match.');
   }
 
@@ -372,7 +364,7 @@ sub _validate_all_of {
     push @expected, $schema_type;
   }
 
-  warn "[JSON::Validator] allOf @{[$path||'/']} == [@errors]\n" if DEBUG == 2;
+  warn "[JSON::Validator] allOf @{[$path||'/']} == [@errors]\n" if DEBUG > 1;
   my $expected = join ' or ', _uniq(@expected);
   return E $path, "allOf failed: Expected $expected, not $type."
     if $expected and @errors + @expected == @$rules;
@@ -388,7 +380,7 @@ sub _validate_any_of {
   for my $rule (@$rules) {
     @e = $self->_validate($data, $path, $rule);
     if (!@e) {
-      warn "[JSON::Validator] anyOf @{[$path||'/']} == success\n" if DEBUG == 2;
+      warn "[JSON::Validator] anyOf @{[$path||'/']} == success\n" if DEBUG > 1;
       return;
     }
     my $schema_type = _guess_schema_type($rule);
@@ -396,7 +388,7 @@ sub _validate_any_of {
     push @expected, $schema_type;
   }
 
-  warn "[JSON::Validator] anyOf @{[$path||'/']} == [@errors]\n" if DEBUG == 2;
+  warn "[JSON::Validator] anyOf @{[$path||'/']} == [@errors]\n" if DEBUG > 1;
   my $expected = join ' or ', _uniq(@expected);
   return E $path, "anyOf failed: Expected $expected, got $type." unless @errors;
   return E $path, sprintf "anyOf failed: %s", _merge_errors(@errors);
@@ -415,11 +407,11 @@ sub _validate_one_of {
   }
 
   if (@errors + @expected + 1 == @$rules) {
-    warn "[JSON::Validator] oneOf @{[$path||'/']} == success\n" if DEBUG == 2;
+    warn "[JSON::Validator] oneOf @{[$path||'/']} == success\n" if DEBUG > 1;
     return;
   }
 
-  if (DEBUG == 2) {
+  if (DEBUG > 1) {
     warn sprintf "[JSON::Validator] oneOf %s == failed=%s/%s / @errors\n", $path || '/',
       @errors + @expected, int @$rules;
   }
