@@ -8,6 +8,15 @@ use Test::More;
 
 $ENV{TEST_VALIDATOR_CLASS} = 'JSON::Validator';
 
+sub jv_ok {
+  my ($data, $joi, @expected) = @_;
+  my $description ||= @expected ? "errors: @expected" : "valid: " . encode_json($data);
+  my @errors = JSON::Validator::jv($data, $joi);
+  Test::More::is_deeply([map { $_->TO_JSON } sort { $a->path cmp $b->path } @errors],
+    [map { $_->TO_JSON } sort { $a->path cmp $b->path } @expected], $description)
+    or Test::More::diag(encode_json(\@errors));
+}
+
 sub validate_ok {
   my ($data, $schema, @expected) = @_;
   my $description ||= @expected ? "errors: @expected" : "valid: " . encode_json($data);
@@ -30,6 +39,7 @@ sub import {
   monkey_patch $caller => false        => \&Mojo::JSON::false;
   monkey_patch $caller => true         => \&Mojo::JSON::true;
   monkey_patch $caller => validate_ok  => \&validate_ok;
+  monkey_patch $caller => jv_ok        => \&jv_ok;
 }
 
 1;

@@ -5,6 +5,7 @@ use B;
 use Carp ();
 use Exporter 'import';
 use JSON::Validator::Error;
+use JSON::Validator::Joi;
 use Mojo::File 'path';
 use Mojo::JSON::Pointer;
 use Mojo::JSON;
@@ -20,7 +21,7 @@ use constant SPECIFICATION_URL => 'http://json-schema.org/draft-04/schema#';
 use constant DEBUG => $ENV{JSON_VALIDATOR_DEBUG} || 0;
 
 our $VERSION   = '0.98';
-our @EXPORT_OK = 'validate_json';
+our @EXPORT_OK = qw(jv validate_json);
 
 my $BUNDLED_CACHE_DIR = path(path(__FILE__)->dirname, qw(Validator cache));
 my $HTTP_SCHEME_RE = qr{^https?:};
@@ -59,6 +60,12 @@ sub coerce {
   $self->{coerce}
     = $_[0] eq '1' ? {booleans => 1, numbers => 1, strings => 1} : ref $_[0] ? {%{$_[0]}} : {@_};
   $self;
+}
+
+sub jv {
+  return JSON::Validator::Joi->new unless @_;
+  my ($data, $joi) = @_;
+  return $joi->validate($data, $joi);
 }
 
 sub load_and_validate_schema {
@@ -104,9 +111,7 @@ sub validate {
   return $self->_validate($data, '', $schema);
 }
 
-sub validate_json {
-  __PACKAGE__->singleton->schema($_[1])->validate($_[0]);
-}
+sub validate_json { __PACKAGE__->singleton->schema($_[1])->validate($_[0]); }
 
 sub _build_formats {
   return {
@@ -1010,6 +1015,14 @@ Note that these error messages are subject for change. Any suggestions are most
 welcome!
 
 =head1 FUNCTIONS
+
+=head2 jv
+
+  use JSON::Validator "jv";
+  my $joi = jv;
+  my @errors = jv($data, $joi); # same as $joi->validate($data);
+
+Used to construct a new L<JSON::Validator::Joi> object or perform validation.
 
 =head2 validate_json
 
